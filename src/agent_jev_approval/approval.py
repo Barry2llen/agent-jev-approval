@@ -87,11 +87,61 @@ def _fallback(reason: str, confidence: float | None) -> ApprovalResult:
 
 def _safe_error_code(error: BaseException) -> str:
     name = type(error).__name__.lower()
+
+    # Keep Provider diagnostics useful without ever exposing exception text. The
+    # official TypeSafe SDK has stable exception class names and HTTP status
+    # attributes, so prefer those over matching arbitrary messages.
     if "timeout" in name:
         return "timeout"
     if "responsevalidation" in name or "validation" in name:
         return "invalid_response"
-    if "api" in name or "http" in name or "connection" in name:
+
+    named_codes = (
+        ("authentication", "authentication"),
+        ("unauthorized", "authentication"),
+        ("permissiondenied", "permission_denied"),
+        ("forbidden", "permission_denied"),
+        ("ratelimit", "rate_limited"),
+        ("badrequest", "bad_request"),
+        ("unprocessableentity", "unprocessable_entity"),
+        ("notfound", "not_found"),
+        ("internalserver", "server_error"),
+    )
+    for marker, code in named_codes:
+        if marker in name:
+            return code
+
+    try:
+        status = getattr(error, "status", None)
+    except Exception:  # noqa: BLE001 - error classification must never escape.
+        status = None
+    if isinstance(status, int) and not isinstance(status, bool):
+        status_codes = {
+            400: "bad_request",
+            401: "authentication",
+            403: "permission_denied",
+            404: "not_found",
+            422: "unprocessable_entity",
+            429: "rate_limited",
+        }
+        if status in status_codes:
+            return status_codes[status]
+        if status >= 500:
+            return "server_error"
+
+    if "connection" in name:
+        return "connection"
+    if name == "typesafeerror":
+        # Config.resolve() uses this stable prefix for an absent key. We only
+        # inspect it to select a code; the message is never returned or logged.
+        try:
+            message = str(error).strip().lower()
+        except Exception:  # noqa: BLE001 - preserve fail-to-user on broken errors.
+            message = ""
+        if message.startswith("no api key was provided"):
+            return "missing_api_key"
+        return "sdk_error"
+    if "apierror" in name or "http" in name:
         return "api_error"
     if isinstance(error, (ValueError, TypeError, KeyError, AttributeError)):
         return "invalid_response"

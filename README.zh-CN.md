@@ -86,7 +86,7 @@ $env:TYPESAFE_DEFAULT_MODEL = "jev-latest"
 $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 ```
 
-Hook 使用 1.5 秒短超时并关闭 SDK 重试。缺少 key、超时、连接失败、API error 或 response 无法解析时，都会回退用户。
+Hook 使用 1.5 秒短超时并关闭 SDK 重试。缺少 key、超时、连接失败、API error 或 response 无法解析时，都会回退用户。Provider 故障使用稳定诊断码：`provider:missing_api_key`、`provider:timeout`、`provider:connection`、`provider:authentication`、`provider:permission_denied`、`provider:rate_limited`、`provider:bad_request`、`provider:unprocessable_entity`、`provider:not_found`、`provider:server_error`、`provider:invalid_response`、`provider:api_error` 或 `provider:sdk_error`；未知异常仍使用 `provider:error`。
 
 Codex 的用户级目录由 `CODEX_HOME` 控制。如果 Codex 使用了非默认目录，请在安装 Hook 前设置：
 
@@ -234,7 +234,7 @@ result = evaluate_approval(
 
 ## 安全与隐私
 
-- 任意异常、超时、API error、缺少 answer 或 malformed response 都会变成 `FALLBACK_TO_USER`。
+- 任意异常、超时、API error、缺少 answer 或 malformed response 都会变成 `FALLBACK_TO_USER`；Provider 故障会归约为上面列出的稳定 reason code。
 - hard rules 在 Jev 调用前执行，已知高影响命令不会发送给 Provider。
 - stdout 只可能包含官方 Codex allow JSON 或为空。
 - stderr 只输出稳定的 fallback 或 audit reason code，不输出 API key、token、credential、secret、完整命令或完整参数。
@@ -256,7 +256,7 @@ py -m pytest -q
 - 安全只读和普通低风险操作；
 - 所有 hard-rule 类型；
 - Jev 风险高和 confidence 不足；
-- timeout、API error、malformed response；
+- timeout、分类后的 TypeSafe SDK error、API error、malformed response；
 - Codex 输入转换；
 - 精确 allow JSON 和空 stdout fallback；
 - 所有 Hook 结果各有一条隐私安全审计记录，以及审计写入失败时的行为；
@@ -290,7 +290,7 @@ py -m pytest -q
 
 Prompt 捕获命令会刻意保持 stdout 为空。没有匹配当前 Prompt 的 PermissionRequest 会以 `missing_user_prompt` 回退。
 
-没有可用 API key 时，预期 stdout 为空，stderr 只显示 fallback reason code。
+没有可用 API key 时，预期 stdout 为空，stderr 显示 `provider:missing_api_key`；不会输出异常文本。
 
 ## 新增 Agent Adapter
 

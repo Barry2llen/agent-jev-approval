@@ -86,7 +86,7 @@ $env:TYPESAFE_DEFAULT_MODEL = "jev-latest"
 $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 ```
 
-The hook uses a short 1.5-second provider timeout and disables SDK retries. A missing key, timeout, connection failure, API error, or invalid response falls back to the user.
+The hook uses a short 1.5-second provider timeout and disables SDK retries. A missing key, timeout, connection failure, API error, or invalid response falls back to the user. Provider failures use stable diagnostics: `provider:missing_api_key`, `provider:timeout`, `provider:connection`, `provider:authentication`, `provider:permission_denied`, `provider:rate_limited`, `provider:bad_request`, `provider:unprocessable_entity`, `provider:not_found`, `provider:server_error`, `provider:invalid_response`, `provider:api_error`, or `provider:sdk_error`. Unknown exceptions remain `provider:error`.
 
 Codex's user-level directory is controlled by `CODEX_HOME`. Set it before installing the Hook when Codex uses a non-default home:
 
@@ -234,7 +234,7 @@ Lowering thresholds expands autonomous execution and should be backed by local e
 
 ## Security and privacy
 
-- Any exception, timeout, API error, missing answer, or malformed response becomes `FALLBACK_TO_USER`.
+- Any exception, timeout, API error, missing answer, or malformed response becomes `FALLBACK_TO_USER`; Provider failures are reduced to the stable reason codes listed above.
 - Hard rules run before Jev, so known high-impact commands do not reach the provider.
 - stdout contains only the official Codex allow JSON or nothing.
 - stderr contains only stable fallback or audit reason codes; it does not print API keys, tokens, credentials, secrets, full commands, or full arguments.
@@ -256,7 +256,7 @@ The tests use fake providers and a local HTTP stub; they do not require a real T
 - safe read-only and ordinary low-risk operations;
 - every listed hard-rule class;
 - elevated Jev risk and insufficient confidence;
-- timeout, API error, and malformed provider responses;
+- timeout, classified TypeSafe SDK errors, API errors, and malformed provider responses;
 - Codex input normalization;
 - exact allow JSON and empty-stdout fallback;
 - one privacy-safe audit record for every Hook outcome, including audit-write failure behavior;
@@ -290,7 +290,7 @@ To simulate Codex input manually:
 
 The prompt capture command intentionally writes no stdout. A PermissionRequest without a matching current prompt falls back with `missing_user_prompt`.
 
-Without a usable API key, stdout is expected to remain empty and stderr contains a fallback reason code.
+Without a usable API key, stdout is expected to remain empty and stderr contains `provider:missing_api_key`; exception text is never emitted.
 
 ## Adding another agent adapter
 

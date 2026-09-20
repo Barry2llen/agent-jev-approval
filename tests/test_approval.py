@@ -2,6 +2,22 @@ from __future__ import annotations
 
 import math
 
+from httpx2 import Headers
+from typesafe_sdk import (
+    TypeSafeAPIConnectionError,
+    TypeSafeAPIError,
+    TypeSafeAPIResponseValidationError,
+    TypeSafeAPITimeoutError,
+    TypeSafeAuthenticationError,
+    TypeSafeBadRequestError,
+    TypeSafeError,
+    TypeSafeInternalServerError,
+    TypeSafeNotFoundError,
+    TypeSafePermissionDeniedError,
+    TypeSafeRateLimitError,
+    TypeSafeUnprocessableEntityError,
+)
+
 from agent_jev_approval.approval import evaluate_approval
 from agent_jev_approval.models import ApprovalDecision, ApprovalRequest, JevAssessment
 
@@ -110,6 +126,31 @@ def test_timeout_and_api_errors_fall_back_without_exposing_error_text() -> None:
         assert result.decision is ApprovalDecision.FALLBACK_TO_USER
         assert result.reason in {"provider:timeout", "provider:error"}
         assert "secret" not in result.reason
+
+
+def test_typesafe_provider_errors_have_specific_stable_reason_codes() -> None:
+    headers = Headers()
+    cases: list[tuple[BaseException, str]] = [
+        (TypeSafeError("No API key was provided. Pass api_key or set the TYPESAFE_API_KEY environment variable."), "provider:missing_api_key"),
+        (TypeSafeAPITimeoutError(1.5), "provider:timeout"),
+        (TypeSafeAPIConnectionError("offline"), "provider:connection"),
+        (TypeSafeAuthenticationError(401, {}, headers), "provider:authentication"),
+        (TypeSafePermissionDeniedError(403, {}, headers), "provider:permission_denied"),
+        (TypeSafeBadRequestError(400, {}, headers), "provider:bad_request"),
+        (TypeSafeUnprocessableEntityError(422, {}, headers), "provider:unprocessable_entity"),
+        (TypeSafeNotFoundError(404, {}, headers), "provider:not_found"),
+        (TypeSafeRateLimitError(429, {}, headers), "provider:rate_limited"),
+        (TypeSafeInternalServerError(503, {}, headers), "provider:server_error"),
+        (TypeSafeAPIResponseValidationError(200, {}, headers, "answers.safe_to_auto_approve"), "provider:invalid_response"),
+        (TypeSafeAPIError(418, {}, headers), "provider:api_error"),
+        (TypeSafeError("SDK configuration is invalid"), "provider:sdk_error"),
+    ]
+
+    for error, expected_reason in cases:
+        result = evaluate_approval(request(), StubProvider(error))
+
+        assert result.decision is ApprovalDecision.FALLBACK_TO_USER
+        assert result.reason == expected_reason
 
 
 def test_malformed_provider_assessment_falls_back() -> None:

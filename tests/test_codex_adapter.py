@@ -23,6 +23,13 @@ class SecretErrorProvider:
         raise RuntimeError("api_key=sk-secret-token")
 
 
+class MissingApiKeyProvider:
+    def assess(self, _: object) -> JevAssessment:
+        from typesafe_sdk import TypeSafeError
+
+        raise TypeSafeError("No API key was provided. Pass api_key or set the TYPESAFE_API_KEY environment variable.")
+
+
 class NoopAuditWriter:
     def write(self, _: object) -> None:
         return
@@ -187,6 +194,24 @@ def test_provider_exception_does_not_reach_stderr() -> None:
     assert stdout.getvalue() == ""
     assert "sk-secret-token" not in stderr.getvalue()
     assert "provider:error" in stderr.getvalue()
+
+
+def test_missing_api_key_provider_exception_is_diagnosed_without_text() -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = run_codex_hook(
+        io.StringIO(json.dumps(payload())),
+        stdout,
+        stderr,
+        provider=MissingApiKeyProvider(),
+        audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == "agent-jev-approval: fallback: provider:missing_api_key\n"
 
 
 def test_user_prompt_hook_stores_prompt_without_stdout() -> None:
