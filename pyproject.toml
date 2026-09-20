@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-jev-approval"
+version = "0.1.0"
+description = "TypeSafe Jev based automatic approval for coding agents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typesafe-sdk>=0.7,<0.8",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+agent-jev-approval = "agent_jev_approval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

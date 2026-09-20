@@ -1,0 +1,19 @@
+{
+  "description": "TypeSafe Jev approval for Codex",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-jev-approval codex",
+            "commandWindows": "agent-jev-approval codex",
+            "timeout": 3,
+            "statusMessage": "Checking approval with Jev"
+          }
+        ]
+      }
+    ]
+  }
+}
