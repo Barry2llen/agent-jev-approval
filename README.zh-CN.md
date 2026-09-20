@@ -112,6 +112,8 @@ $env:AGENT_JEV_AUDIT_LOG = "C:\Logs\agent-jev-approval.jsonl"
 
 日志采用同步追加、best-effort 写入。文件系统失败时只输出稳定的 `audit_write_error` 诊断，不改变审批结果或 Codex stdout 协议。本项目不负责日志轮转，也不提供防篡改证据链；如有需要请配置外部留存和轮转。
 
+在 `PermissionRequest` 前，同步的 `UserPromptSubmit` Hook 会按 session 和 turn ID 暂存当前用户 Prompt。每个 turn 最多保存 16 KiB，1 小时后过期，文件写入 `$CODEX_HOME/agent-jev-approval-prompts/` 并使用用户私有权限。Prompt 缺失或过期时会以 `missing_user_prompt` 安全回退，不会拿更早轮次的 Prompt 代替；Prompt 不写入审计 JSONL。
+
 ## 接入 Codex
 
 一键安装命令会把 Hook 合并到用户级 Codex 配置，保留其他 Hook，并在修改已有文件前创建备份：
@@ -139,8 +141,14 @@ agent-jev-approval install-codex-hook --dry-run
 agent-jev-approval install-codex-hook --path "$env:CODEX_HOME/hooks.json" --command "py -m agent_jev_approval.cli codex"
 ```
 
-安装器可重复执行：会更新已有的 `agent-jev-approval codex` 条目而不是重复添加，保留无关 Hook，遇到 malformed JSON 时拒绝覆盖，并使用原子写入。
+安装器可重复执行：会更新已有的 `agent-jev-approval codex` 和 `agent-jev-approval codex-user-prompt` 条目而不是重复添加，保留无关 Hook，遇到 malformed JSON 时拒绝覆盖，并使用原子写入。
 `--timeout` 使用整数秒，因为 Codex Hook schema 要求无符号整数。
+
+如果主 Hook 使用自定义 Python 命令，也要同时指定匹配的 Prompt Hook：
+
+```powershell
+agent-jev-approval install-codex-hook --command "py -m agent_jev_approval.cli codex" --prompt-command "py -m agent_jev_approval.cli codex-user-prompt"
+```
 
 将 [`examples/codex-hooks.json`](examples/codex-hooks.json) 合并到 Codex 生效的 Hook 配置层：
 
@@ -157,18 +165,19 @@ Codex 可能会要求审查非托管 Hook。使用 `/hooks` 检查并信任精�
 
 ## 决策流程
 
-1. Codex 通过 stdin 发送一个 `PermissionRequest` JSON 对象。
-2. Codex Adapter 读取 `tool_name`、`tool_input`、`cwd` 和会话上下文。
-3. deterministic hard rules 在任何 Jev 调用前检查明显危险的操作。
-4. TypeSafe Jev 在一次请求中评估多个独立信号：
+1. Codex 先发送 `UserPromptSubmit`；Hook 按 `session_id` 和 `turn_id` 短暂保存 Prompt，且不向模型可见 stdout 输出内容。
+2. Codex 通过 stdin 发送一个 `PermissionRequest` JSON 对象。
+3. Codex Adapter 读取 `tool_name`、`tool_input`、`cwd`、会话上下文和匹配的当前用户 Prompt。
+4. deterministic hard rules 在任何 Jev 调用前检查明显危险的操作。
+5. TypeSafe Jev 在一次请求中评估多个独立信号：
    - 是否适合无人值守执行；
    - 是否具有破坏性或不可逆性；
    - 是否涉及 credential、secret、token 或敏感数据；
    - 是否扩大了用户原始操作范围；
    - 是否影响当前任务或工作区之外的资源；
    - 风险分类：`read_only`、`reversible_change`、`sensitive_or_external` 或 `destructive`。
-5. 程序对所有必需 probability 和风险分类 confidence 应用阈值。
-6. 只有 `ALLOW` 会写入 Codex 的结构化 allow response；其他所有路径都不写 stdout，让 Codex 继续原生用户审批。
+6. 程序对所有必需 probability 和风险分类 confidence 应用阈值。
+7. 只有 `ALLOW` 会写入 Codex 的结构化 allow response；其他所有路径都不写 stdout，让 Codex 继续原生用户审批。
 
 MVP 不会主动返回 `deny`。
 
@@ -192,7 +201,7 @@ MVP 不会主动返回 `deny`。
 默认 `PolicyConfig`：
 
 ```text
-min_safe_probability = 0.90
+min_safe_probability = 0.85
 max_risk_probability = 0.10
 min_safe_band_probability = 0.85
 min_confidence = 0.85
@@ -201,7 +210,7 @@ provider_timeout_seconds = 1.5
 
 只有以下条件全部满足才会自动 `ALLOW`：
 
-- `safe_to_auto_approve >= 0.90`；
+- `safe_to_auto_approve >= 0.85`；
 - 每个风险 Noul `<= 0.10`；
 - `risk_band` 为 `read_only` 或 `reversible_change`；
 - 选中的安全风险分类 probability `>= 0.85`；
@@ -230,7 +239,8 @@ result = evaluate_approval(
 - stdout 只可能包含官方 Codex allow JSON 或为空。
 - stderr 只输出稳定的 fallback 或 audit reason code，不输出 API key、token、credential、secret、完整命令或完整参数。
 - Provider 会关闭 TypeSafe SDK 的 body logging。
-- 规范化后的审批请求会发送给 TypeSafe 评估。启用前请检查自身数据处理要求；当前 MVP 不做出站 secret redaction。
+- 规范化后的审批请求（包括当前用户 Prompt）会发送给 TypeSafe 评估。启用前请检查自身数据处理要求；当前 MVP 不做出站 secret redaction。
+- 当前用户 Prompt 只保存在短时本地缓存中，不写入审计 JSONL。
 - Hook 只是防线之一。更强的控制仍应使用最小权限 OS 账号、仓库保护和网络控制。
 
 ## 开发与测试
@@ -250,11 +260,21 @@ py -m pytest -q
 - Codex 输入转换；
 - 精确 allow JSON 和空 stdout fallback；
 - 所有 Hook 结果各有一条隐私安全审计记录，以及审计写入失败时的行为；
+- Prompt 捕获、session/turn 关联、过期、缺失 Prompt 回退，以及不含 Prompt 的审计记录；
 - 使用本地 TypeSafe stub 的真实 CLI 子进程。
 
 手动模拟 Codex 输入：
 
 ```powershell
+@'
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "demo-session",
+  "turn_id": "demo-turn",
+  "prompt": "检查仓库并报告安全的修改。"
+}
+'@ | agent-jev-approval codex-user-prompt
+
 @'
 {
   "hook_event_name": "PermissionRequest",
@@ -267,6 +287,8 @@ py -m pytest -q
 }
 '@ | agent-jev-approval codex
 ```
+
+Prompt 捕获命令会刻意保持 stdout 为空。没有匹配当前 Prompt 的 PermissionRequest 会以 `missing_user_prompt` 回退。
 
 没有可用 API key 时，预期 stdout 为空，stderr 只显示 fallback reason code。
 

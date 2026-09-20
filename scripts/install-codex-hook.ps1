@@ -4,6 +4,7 @@ param(
     [string]$Scope = "user",
     [string]$Path,
     [string]$Command,
+    [string]$PromptCommand,
     [switch]$DryRun
 )
 
@@ -15,6 +16,10 @@ if ($Path) {
 
 if ($Command) {
     $arguments += @("--command", $Command)
+}
+
+if ($PromptCommand) {
+    $arguments += @("--prompt-command", $PromptCommand)
 }
 
 if ($DryRun) {

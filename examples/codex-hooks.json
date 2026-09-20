@@ -1,6 +1,19 @@
 {
   "description": "TypeSafe Jev approval for Codex",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-jev-approval codex-user-prompt",
+            "commandWindows": "agent-jev-approval codex-user-prompt",
+            "timeout": 3,
+            "statusMessage": "Capturing current user prompt"
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "matcher": ".*",

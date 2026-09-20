@@ -4,8 +4,9 @@ import io
 import json
 
 from agent_jev_approval.adapters.codex import parse_codex_permission_request, render_result
-from agent_jev_approval.cli import main, run_codex_hook
+from agent_jev_approval.cli import main, run_codex_hook, run_codex_user_prompt_hook
 from agent_jev_approval.models import ApprovalDecision, ApprovalResult, JevAssessment
+from agent_jev_approval.prompt_context import FilePromptStore, PromptRecord
 
 
 class AllowProvider:
@@ -25,6 +26,26 @@ class SecretErrorProvider:
 class NoopAuditWriter:
     def write(self, _: object) -> None:
         return
+
+
+class PromptStoreStub:
+    def __init__(self) -> None:
+        self.prompts: dict[tuple[str, str], str] = {("session-1", "turn-1"): "Inspect the repository safely"}
+
+    def save(self, record: PromptRecord) -> None:
+        self.prompts[(record.session_id, record.turn_id)] = record.prompt
+
+    def load(self, *, session_id: str, turn_id: str) -> str | None:
+        return self.prompts.get((session_id, turn_id))
+
+
+class ContextProvider:
+    def __init__(self) -> None:
+        self.request: object | None = None
+
+    def assess(self, request: object) -> JevAssessment:
+        self.request = request
+        return JevAssessment(0.99, 0.01, 0.01, 0.01, 0.01, "read_only", 0.99, 0.95)
 
 
 def payload(command: str = "git status") -> dict[str, object]:
@@ -69,7 +90,14 @@ def test_cli_allow_writes_only_allow_json() -> None:
     stderr = io.StringIO()
     provider = AllowProvider()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider, audit_writer=NoopAuditWriter())
+    exit_code = run_codex_hook(
+        stdin,
+        stdout,
+        stderr,
+        provider=provider,
+        audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
+    )
 
     assert exit_code == 0
     assert json.loads(stdout.getvalue()) == {
@@ -88,7 +116,14 @@ def test_cli_fallback_keeps_native_approval_by_leaving_stdout_empty() -> None:
     stderr = io.StringIO()
     provider = AllowProvider()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider, audit_writer=NoopAuditWriter())
+    exit_code = run_codex_hook(
+        stdin,
+        stdout,
+        stderr,
+        provider=provider,
+        audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
+    )
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
@@ -101,7 +136,13 @@ def test_malformed_input_falls_back_without_secret_logging() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr, audit_writer=NoopAuditWriter())
+    exit_code = run_codex_hook(
+        stdin,
+        stdout,
+        stderr,
+        audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
+    )
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
@@ -121,6 +162,7 @@ def test_missing_cwd_is_malformed_and_cannot_auto_approve() -> None:
         stderr,
         provider=AllowProvider(),
         audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
     )
 
     assert exit_code == 0
@@ -138,12 +180,83 @@ def test_provider_exception_does_not_reach_stderr() -> None:
         stderr,
         provider=SecretErrorProvider(),
         audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
     )
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
     assert "sk-secret-token" not in stderr.getvalue()
     assert "provider:error" in stderr.getvalue()
+
+
+def test_user_prompt_hook_stores_prompt_without_stdout() -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    store = PromptStoreStub()
+
+    exit_code = run_codex_user_prompt_hook(
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": "UserPromptSubmit",
+                    "session_id": "session-1",
+                    "turn_id": "turn-2",
+                    "prompt": "Please inspect the current changes",
+                }
+            )
+        ),
+        stdout,
+        stderr,
+        prompt_store=store,
+    )
+
+    assert exit_code == 0
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == ""
+    assert store.load(session_id="session-1", turn_id="turn-2") == "Please inspect the current changes"
+
+
+def test_permission_request_adds_current_prompt_to_provider_context() -> None:
+    provider = ContextProvider()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    run_codex_hook(
+        io.StringIO(json.dumps(payload())),
+        stdout,
+        stderr,
+        provider=provider,
+        audit_writer=NoopAuditWriter(),
+        prompt_store=PromptStoreStub(),
+    )
+
+    assert json.loads(stdout.getvalue())["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+    assert getattr(provider.request, "context")["user_prompt"] == "Inspect the repository safely"
+
+
+def test_oversized_prompt_capture_does_not_write_stdout(tmp_path) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    store = FilePromptStore(tmp_path / "prompts", max_prompt_length=4)
+
+    run_codex_user_prompt_hook(
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": "UserPromptSubmit",
+                    "session_id": "session-1",
+                    "turn_id": "turn-1",
+                    "prompt": "too long",
+                }
+            )
+        ),
+        stdout,
+        stderr,
+        prompt_store=store,
+    )
+
+    assert stdout.getvalue() == ""
+    assert "prompt_capture_error" in stderr.getvalue()
 
 
 def test_unknown_cli_command_is_not_a_hook_decision() -> None:

@@ -14,6 +14,7 @@ from agent_jev_approval.audit import (
 )
 from agent_jev_approval.cli import run_codex_hook
 from agent_jev_approval.models import ApprovalDecision, JevAssessment
+from agent_jev_approval.prompt_context import PromptRecord
 
 
 class AllowProvider:
@@ -43,6 +44,19 @@ class FailingAuditWriter:
         raise OSError("disk full: secret=do-not-log")
 
 
+class PromptStoreStub:
+    def __init__(self, prompt: str | None = "Inspect the repository safely") -> None:
+        self.prompt = prompt
+
+    def save(self, _: PromptRecord) -> None:
+        return
+
+    def load(self, *, session_id: str, turn_id: str) -> str | None:
+        if (session_id, turn_id) == ("session-1", "turn-1"):
+            return self.prompt
+        return None
+
+
 def payload(command: str = "git status") -> dict[str, object]:
     return {
         "hook_event_name": "PermissionRequest",
@@ -55,7 +69,13 @@ def payload(command: str = "git status") -> dict[str, object]:
     }
 
 
-def _run(payload_value: object, writer: RecordingAuditWriter, provider: object | None = None) -> tuple[str, str]:
+def _run(
+    payload_value: object,
+    writer: RecordingAuditWriter,
+    provider: object | None = None,
+    *,
+    prompt: str | None = "Inspect the repository safely",
+) -> tuple[str, str]:
     stdout = io.StringIO()
     stderr = io.StringIO()
     run_codex_hook(
@@ -64,6 +84,7 @@ def _run(payload_value: object, writer: RecordingAuditWriter, provider: object |
         stderr,
         provider=provider,  # type: ignore[arg-type]
         audit_writer=writer,
+        prompt_store=PromptStoreStub(prompt),
     )
     return stdout.getvalue(), stderr.getvalue()
 
@@ -86,7 +107,7 @@ def test_allow_audit_contains_only_safe_metadata() -> None:
     assert record["provider_called"] is True
     assert isinstance(record["duration_ms"], int)
     serialized = json.dumps(record)
-    for secret in ("git status", "private-repository", "transcript.jsonl", "description"):
+    for secret in ("git status", "private-repository", "transcript.jsonl", "description", "Inspect the repository safely"):
         assert secret not in serialized
 
 
@@ -138,11 +159,24 @@ def test_audit_writer_failure_does_not_change_allow_result() -> None:
         stderr,
         provider=AllowProvider(),
         audit_writer=FailingAuditWriter(),
+        prompt_store=PromptStoreStub(),
     )
 
     assert json.loads(stdout.getvalue())["hookSpecificOutput"]["decision"]["behavior"] == "allow"
     assert "audit: audit_write_error" in stderr.getvalue()
     assert "disk full" not in stderr.getvalue()
+
+
+def test_missing_prompt_falls_back_without_calling_provider() -> None:
+    writer = RecordingAuditWriter()
+    provider = AllowProvider()
+    stdout, stderr = _run(payload(), writer, provider, prompt=None)
+
+    assert stdout == ""
+    assert "missing_user_prompt" in stderr
+    assert provider.calls == 0
+    assert writer.records[0].reason == "missing_user_prompt"
+    assert writer.records[0].provider_called is False
 
 
 def test_audit_identifiers_are_bounded_and_printable() -> None:
@@ -205,6 +239,7 @@ def test_audit_off_disables_writer_and_blank_uses_default(monkeypatch, tmp_path:
         stdout,
         stderr,
         provider=AllowProvider(),
+        prompt_store=PromptStoreStub(),
     )
     assert json.loads(stdout.getvalue())["hookSpecificOutput"]["decision"]["behavior"] == "allow"
     assert stderr.getvalue() == ""
@@ -226,6 +261,7 @@ def test_invalid_audit_path_warns_without_changing_decision(monkeypatch, tmp_pat
         stdout,
         stderr,
         provider=AllowProvider(),
+        prompt_store=PromptStoreStub(),
     )
 
     assert json.loads(stdout.getvalue())["hookSpecificOutput"]["decision"]["behavior"] == "allow"

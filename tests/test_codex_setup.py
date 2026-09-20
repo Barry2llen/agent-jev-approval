@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_jev_approval.codex_setup import CodexHookInstallError, install_codex_hook
+from agent_jev_approval.codex_setup import DEFAULT_PROMPT_HOOK_COMMAND, CodexHookInstallError, install_codex_hook
 from agent_jev_approval.cli import main
 
 
@@ -28,6 +28,14 @@ def test_install_creates_user_config_without_backup(tmp_path: Path) -> None:
         "commandWindows": "agent-jev-approval codex",
         "timeout": 3,
         "statusMessage": "Checking approval with Jev",
+    }
+    prompt_hook = config["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    assert prompt_hook == {
+        "type": "command",
+        "command": DEFAULT_PROMPT_HOOK_COMMAND,
+        "commandWindows": DEFAULT_PROMPT_HOOK_COMMAND,
+        "timeout": 3,
+        "statusMessage": "Capturing current user prompt",
     }
 
 
@@ -62,7 +70,14 @@ def test_install_merges_existing_hooks_and_is_idempotent(tmp_path: Path) -> None
     assert second.changed is False
     config = read_json(target)
     assert config["description"] == "keep me"
-    assert len(config["hooks"]["UserPromptSubmit"]) == 1
+    assert len(config["hooks"]["UserPromptSubmit"]) == 2
+    prompt_hooks = [
+        hook
+        for group in config["hooks"]["UserPromptSubmit"]
+        for hook in group["hooks"]
+        if hook.get("command") == DEFAULT_PROMPT_HOOK_COMMAND
+    ]
+    assert len(prompt_hooks) == 1
     permission_groups = config["hooks"]["PermissionRequest"]
     assert len(permission_groups) == 2
     jev_hooks = [hook for group in permission_groups for hook in group["hooks"] if hook.get("command") == "agent-jev-approval codex"]
@@ -99,6 +114,25 @@ def test_existing_python_command_is_updated_in_place(tmp_path: Path) -> None:
     assert len(groups) == 1
     assert groups[0]["matcher"] == "Bash"
     assert groups[0]["hooks"][0]["timeout"] == 4.0
+
+
+def test_custom_prompt_command_is_installed_and_idempotent(tmp_path: Path) -> None:
+    target = tmp_path / "hooks.json"
+    prompt_command = "py -m agent_jev_approval.cli codex-user-prompt"
+
+    first = install_codex_hook(path=target, prompt_command=prompt_command)
+    second = install_codex_hook(path=target, prompt_command=prompt_command)
+
+    assert first.changed is True
+    assert second.changed is False
+    config = read_json(target)
+    prompt_hooks = [
+        hook
+        for group in config["hooks"]["UserPromptSubmit"]
+        for hook in group["hooks"]
+        if hook.get("command") == prompt_command
+    ]
+    assert len(prompt_hooks) == 1
 
 
 def test_malformed_existing_config_is_not_overwritten(tmp_path: Path) -> None:

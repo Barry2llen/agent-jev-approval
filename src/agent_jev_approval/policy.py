@@ -19,7 +19,7 @@ def _is_probability(value: object) -> bool:
 class PolicyConfig:
     """Conservative thresholds used after deterministic checks."""
 
-    min_safe_probability: float = 0.90
+    min_safe_probability: float = 0.85
     max_risk_probability: float = 0.10
     min_safe_band_probability: float = 0.85
     min_confidence: float = 0.85

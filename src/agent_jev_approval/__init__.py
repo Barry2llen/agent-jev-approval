@@ -3,6 +3,7 @@
 from .approval import ApprovalProvider, evaluate_approval
 from .audit import AuditRecord, AuditWriter
 from .models import ApprovalDecision, ApprovalRequest, ApprovalResult, JevAssessment
+from .prompt_context import FilePromptStore, PromptRecord, PromptStore, PromptStoreError, PromptTooLongError
 
 __all__ = [
     "ApprovalDecision",
@@ -11,6 +12,11 @@ __all__ = [
     "ApprovalResult",
     "AuditRecord",
     "AuditWriter",
+    "FilePromptStore",
     "JevAssessment",
+    "PromptRecord",
+    "PromptStore",
+    "PromptStoreError",
+    "PromptTooLongError",
     "evaluate_approval",
 ]

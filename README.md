@@ -112,6 +112,8 @@ Relative override paths are resolved under the Codex user directory. Set `AGENT_
 
 Writes are synchronous, append-only, and best-effort. A filesystem failure emits the stable `audit_write_error` diagnostic without changing the approval result or Codex stdout protocol. The project does not rotate or make the local file tamper-evident; configure external retention and rotation as needed.
 
+Before a `PermissionRequest`, the synchronous `UserPromptSubmit` Hook stores the current user prompt under the session and turn IDs. The prompt cache is bounded to 16 KiB per turn, expires after one hour, and is stored under `$CODEX_HOME/agent-jev-approval-prompts/` with user-private file permissions. A missing or expired prompt fails closed as `missing_user_prompt`; it is never replaced with an older turn's prompt.
+
 ## Connect Codex
 
 The one-command installer merges the Hook into the user-level Codex config, keeps other Hooks, and creates a backup before changing an existing file:
@@ -139,8 +141,14 @@ agent-jev-approval install-codex-hook --dry-run
 agent-jev-approval install-codex-hook --path "$env:CODEX_HOME/hooks.json" --command "py -m agent_jev_approval.cli codex"
 ```
 
-The installer is idempotent. It updates an existing `agent-jev-approval codex` entry instead of adding duplicates, preserves unrelated Hook entries, rejects malformed JSON without overwriting it, and writes atomically.
+The installer is idempotent. It updates existing `agent-jev-approval codex` and `agent-jev-approval codex-user-prompt` entries instead of adding duplicates, preserves unrelated Hook entries, rejects malformed JSON without overwriting it, and writes atomically.
 The `--timeout` value is written as a whole-number second because Codex's Hook schema expects an unsigned integer.
+
+If the main Hook command uses a custom Python invocation, set the matching prompt command too:
+
+```powershell
+agent-jev-approval install-codex-hook --command "py -m agent_jev_approval.cli codex" --prompt-command "py -m agent_jev_approval.cli codex-user-prompt"
+```
 
 Copy or merge [`examples/codex-hooks.json`](examples/codex-hooks.json) into one of Codex's active Hook configuration layers:
 
@@ -157,18 +165,19 @@ Codex may ask you to review unmanaged Hooks. Use `/hooks` to inspect and trust t
 
 ## Decision flow
 
-1. Codex sends one `PermissionRequest` JSON object on stdin.
-2. The Codex adapter reads `tool_name`, `tool_input`, `cwd`, and useful session metadata.
-3. Deterministic hard rules identify obviously dangerous operations before any Jev call.
-4. TypeSafe Jev evaluates several independent signals in one request:
+1. Codex sends a `UserPromptSubmit` event; the prompt is stored briefly by `session_id` and `turn_id` without writing model-visible stdout.
+2. Codex sends one `PermissionRequest` JSON object on stdin.
+3. The Codex adapter reads `tool_name`, `tool_input`, `cwd`, session metadata, and the matching current user prompt.
+4. Deterministic hard rules identify obviously dangerous operations before any Jev call.
+5. TypeSafe Jev evaluates several independent signals in one request:
    - suitability for unattended execution;
    - destructive or irreversible impact;
    - credentials, secrets, tokens, or sensitive data;
    - expansion beyond the apparent user scope;
    - impact outside the current task or workspace;
    - a risk band: `read_only`, `reversible_change`, `sensitive_or_external`, or `destructive`.
-5. The program applies thresholds to all required probabilities and the risk-band confidence.
-6. Only `ALLOW` writes Codex's structured allow response. Every other path writes no stdout, so Codex continues its normal user approval flow.
+6. The program applies thresholds to all required probabilities and the risk-band confidence.
+7. Only `ALLOW` writes Codex's structured allow response. Every other path writes no stdout, so Codex continues its normal user approval flow.
 
 This MVP never proactively returns `deny`.
 
@@ -192,7 +201,7 @@ Rules use command tokens, flags, and structured arguments. They are deliberately
 The default `PolicyConfig` is:
 
 ```text
-min_safe_probability = 0.90
+min_safe_probability = 0.85
 max_risk_probability = 0.10
 min_safe_band_probability = 0.85
 min_confidence = 0.85
@@ -201,7 +210,7 @@ provider_timeout_seconds = 1.5
 
 An action is auto-approved only when all of the following are true:
 
-- `safe_to_auto_approve >= 0.90`;
+- `safe_to_auto_approve >= 0.85`;
 - every risk Noul is `<= 0.10`;
 - `risk_band` is `read_only` or `reversible_change`;
 - the selected safe risk-band probability is `>= 0.85`;
@@ -230,7 +239,8 @@ Lowering thresholds expands autonomous execution and should be backed by local e
 - stdout contains only the official Codex allow JSON or nothing.
 - stderr contains only stable fallback or audit reason codes; it does not print API keys, tokens, credentials, secrets, full commands, or full arguments.
 - TypeSafe SDK body logging is disabled by the provider.
-- The normalized approval request is sent to TypeSafe for evaluation. Review your data-handling requirements before enabling this for sensitive repositories; this MVP does not perform outbound secret redaction.
+- The normalized approval request, including the current user prompt, is sent to TypeSafe for evaluation. Review your data-handling requirements before enabling this for sensitive repositories; this MVP does not perform outbound secret redaction.
+- The current user prompt is kept only in the short-lived local prompt cache and is never written to the audit JSONL file.
 - Treat this Hook as one layer of defense. Use least-privilege OS accounts, repository protections, and network controls for stronger enforcement.
 
 ## Development and tests
@@ -250,11 +260,21 @@ The tests use fake providers and a local HTTP stub; they do not require a real T
 - Codex input normalization;
 - exact allow JSON and empty-stdout fallback;
 - one privacy-safe audit record for every Hook outcome, including audit-write failure behavior;
+- prompt capture, session/turn correlation, expiry, missing-prompt fallback, and prompt-free audit records;
 - a real CLI subprocess using a local TypeSafe stub.
 
 To simulate Codex input manually:
 
 ```powershell
+@'
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "demo-session",
+  "turn_id": "demo-turn",
+  "prompt": "Inspect the repository and report safe changes."
+}
+'@ | agent-jev-approval codex-user-prompt
+
 @'
 {
   "hook_event_name": "PermissionRequest",
@@ -267,6 +287,8 @@ To simulate Codex input manually:
 }
 '@ | agent-jev-approval codex
 ```
+
+The prompt capture command intentionally writes no stdout. A PermissionRequest without a matching current prompt falls back with `missing_user_prompt`.
 
 Without a usable API key, stdout is expected to remain empty and stderr contains a fallback reason code.
 

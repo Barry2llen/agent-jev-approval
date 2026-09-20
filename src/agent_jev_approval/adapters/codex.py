@@ -7,9 +7,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..models import ApprovalDecision, ApprovalRequest, ApprovalResult, JSONValue
+from ..prompt_context import PromptRecord
 
 
 CODEX_HOOK_EVENT = "PermissionRequest"
+CODEX_USER_PROMPT_EVENT = "UserPromptSubmit"
 _CONTEXT_FIELDS = ("session_id", "turn_id", "model", "permission_mode", "transcript_path")
 
 
@@ -63,6 +65,32 @@ def parse_codex_permission_request(payload: object) -> ApprovalRequest:
     )
 
 
+def parse_codex_user_prompt(payload: object, *, stored_at: float) -> PromptRecord:
+    """Normalize one Codex UserPromptSubmit event for the prompt store."""
+
+    if not isinstance(payload, Mapping):
+        raise MalformedCodexInput("event is not an object")
+    if payload.get("hook_event_name") != CODEX_USER_PROMPT_EVENT:
+        raise MalformedCodexInput("unexpected hook event")
+
+    session_id = payload.get("session_id")
+    turn_id = payload.get("turn_id")
+    prompt = payload.get("prompt")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise MalformedCodexInput("missing session_id")
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        raise MalformedCodexInput("missing turn_id")
+    if not isinstance(prompt, str) or not prompt:
+        raise MalformedCodexInput("missing prompt")
+
+    return PromptRecord(
+        session_id=session_id.strip(),
+        turn_id=turn_id.strip(),
+        prompt=prompt,
+        stored_at=stored_at,
+    )
+
+
 def allow_response() -> dict[str, Any]:
     """Return the exact structured response accepted by Codex."""
 
@@ -95,8 +123,10 @@ def _is_json_value(value: object) -> bool:
 
 __all__ = [
     "CODEX_HOOK_EVENT",
+    "CODEX_USER_PROMPT_EVENT",
     "MalformedCodexInput",
     "allow_response",
+    "parse_codex_user_prompt",
     "parse_codex_permission_request",
     "render_result",
 ]

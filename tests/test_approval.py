@@ -48,6 +48,24 @@ def test_safe_read_only_operation_is_allowed() -> None:
     assert provider.calls == 1
 
 
+def test_safe_probability_below_new_threshold_falls_back() -> None:
+    provider = StubProvider(assessment(safe_to_auto_approve=0.849))
+
+    result = evaluate_approval(request(), provider)
+
+    assert result.decision is ApprovalDecision.FALLBACK_TO_USER
+    assert result.reason == "jev:unsafe_to_auto_approve"
+
+
+def test_safe_probability_at_new_threshold_is_allowed() -> None:
+    provider = StubProvider(assessment(safe_to_auto_approve=0.85))
+
+    result = evaluate_approval(request(), provider)
+
+    assert result.decision is ApprovalDecision.ALLOW
+    assert result.reason == "jev:thresholds_satisfied"
+
+
 def test_regular_low_risk_operation_is_judged_by_provider() -> None:
     provider = StubProvider(assessment(risk_band="reversible_change"))
 

@@ -56,7 +56,7 @@ def test_provider_uses_one_request_with_expected_questions_and_state() -> None:
         action="Bash",
         arguments={"command": "git status"},
         cwd="C:/work",
-        context={"session_id": "s1"},
+        context={"session_id": "s1", "user_prompt": "Inspect the repository safely"},
     )
 
     result = provider.assess(request)
@@ -67,6 +67,6 @@ def test_provider_uses_one_request_with_expected_questions_and_state() -> None:
         "action": "Bash",
         "arguments": {"command": "git status"},
         "cwd": "C:/work",
-        "context": {"session_id": "s1"},
+        "context": {"session_id": "s1", "user_prompt": "Inspect the repository safely"},
     }
     assert set(client.questions) == set(build_questions())  # type: ignore[arg-type]

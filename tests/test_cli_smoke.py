@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 def _hook_payload(command: str) -> dict[str, object]:
@@ -14,6 +15,8 @@ def _hook_payload(command: str) -> dict[str, object]:
         "tool_name": "Bash",
         "tool_input": {"command": command},
         "cwd": "C:/work",
+        "session_id": "cli-session",
+        "turn_id": "cli-turn",
     }
 
 
@@ -56,6 +59,7 @@ def _run_cli(
     base_url: str,
     *,
     audit_path: str = "off",
+    codex_home: str,
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment.update(
@@ -64,8 +68,25 @@ def _run_cli(
             "TYPESAFE_BASE_URL": base_url,
             "TYPESAFE_LOG_LEVEL": "off",
             "AGENT_JEV_AUDIT_LOG": audit_path,
+            "CODEX_HOME": codex_home,
         }
     )
+    prompt_payload = {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": payload["session_id"],
+        "turn_id": payload["turn_id"],
+        "prompt": "Inspect the repository and keep the change focused.",
+    }
+    capture = subprocess.run(
+        [sys.executable, "-m", "agent_jev_approval.cli", "codex-user-prompt"],
+        input=json.dumps(prompt_payload),
+        text=True,
+        capture_output=True,
+        env=environment,
+        check=False,
+    )
+    assert capture.returncode == 0
+    assert capture.stdout == ""
     return subprocess.run(
         [sys.executable, "-m", "agent_jev_approval.cli", "codex"],
         input=json.dumps(payload),
@@ -76,13 +97,17 @@ def _run_cli(
     )
 
 
-def test_real_cli_process_emits_allow_for_stubbed_jev_response() -> None:
+def test_real_cli_process_emits_allow_for_stubbed_jev_response(tmp_path: Path) -> None:
     _TypeSafeStubHandler.request_count = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _TypeSafeStubHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        result = _run_cli(_hook_payload("git status"), f"http://127.0.0.1:{server.server_port}")
+        result = _run_cli(
+            _hook_payload("git status"),
+            f"http://127.0.0.1:{server.server_port}",
+            codex_home=str(tmp_path / "codex"),
+        )
     finally:
         server.shutdown()
         thread.join(timeout=2)
@@ -109,6 +134,7 @@ def test_real_cli_process_writes_one_audit_record(tmp_path) -> None:
             _hook_payload("git status"),
             f"http://127.0.0.1:{server.server_port}",
             audit_path=str(audit_path),
+            codex_home=str(tmp_path / "codex"),
         )
     finally:
         server.shutdown()
@@ -124,8 +150,12 @@ def test_real_cli_process_writes_one_audit_record(tmp_path) -> None:
     assert "git status" not in json.dumps(records[0])
 
 
-def test_real_cli_process_keeps_stdout_empty_for_hard_rule() -> None:
-    result = _run_cli(_hook_payload("git reset --hard HEAD"), "http://127.0.0.1:1")
+def test_real_cli_process_keeps_stdout_empty_for_hard_rule(tmp_path: Path) -> None:
+    result = _run_cli(
+        _hook_payload("git reset --hard HEAD"),
+        "http://127.0.0.1:1",
+        codex_home=str(tmp_path / "codex"),
+    )
 
     assert result.returncode == 0
     assert result.stdout == ""
