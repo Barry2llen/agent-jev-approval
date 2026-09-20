@@ -86,7 +86,7 @@ $env:TYPESAFE_DEFAULT_MODEL = "jev-latest"
 $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 ```
 
-The hook uses a short 1.5-second provider timeout and disables SDK retries. A missing key, timeout, connection failure, API error, or invalid response falls back to the user. Provider failures use stable diagnostics: `provider:missing_api_key`, `provider:timeout`, `provider:connection`, `provider:authentication`, `provider:permission_denied`, `provider:rate_limited`, `provider:bad_request`, `provider:unprocessable_entity`, `provider:not_found`, `provider:server_error`, `provider:invalid_response`, `provider:api_error`, or `provider:sdk_error`. Unknown exceptions remain `provider:error`.
+The hook reads Codex's JSON stdin as UTF-8 bytes, independent of the Windows locale/code page. It uses a short 1.5-second provider timeout and disables SDK retries. A missing key, timeout, connection failure, API error, or invalid response falls back to the user. Provider failures use stable diagnostics: `provider:missing_api_key`, `provider:timeout`, `provider:connection`, `provider:authentication`, `provider:permission_denied`, `provider:rate_limited`, `provider:bad_request`, `provider:unprocessable_entity`, `provider:not_found`, `provider:server_error`, `provider:invalid_response`, `provider:api_error`, or `provider:sdk_error`. Unknown exceptions remain `provider:error`.
 
 Codex's user-level directory is controlled by `CODEX_HOME`. Set it before installing the Hook when Codex uses a non-default home:
 

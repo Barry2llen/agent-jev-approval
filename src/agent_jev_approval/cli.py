@@ -134,7 +134,7 @@ def run_codex_hook(
     result: ApprovalResult
 
     try:
-        raw = stdin.read()
+        raw = _read_hook_input(stdin)
         payload = json.loads(raw)
         request = parse_codex_permission_request(payload)
     except (json.JSONDecodeError, MalformedCodexInput, TypeError, ValueError):
@@ -203,13 +203,32 @@ def run_codex_user_prompt_hook(
     """Capture one UserPromptSubmit event without emitting model-visible stdout."""
 
     try:
-        raw = stdin.read()
+        raw = _read_hook_input(stdin)
         payload = json.loads(raw)
         record = parse_codex_user_prompt(payload, stored_at=time.time())
         (prompt_store if prompt_store is not None else create_prompt_store()).save(record)
     except Exception:  # noqa: BLE001 - prompt capture must never block the user's prompt.
         _write_prompt_capture_error(stderr)
     return 0
+
+
+def _read_hook_input(stdin: TextIO) -> str:
+    """Read Codex's UTF-8 JSON without consulting the Windows locale codec."""
+
+    # Codex writes Hook JSON as UTF-8. Reading ``sys.stdin`` as text on a
+    # Windows console can select GBK/CP936 instead, corrupting non-ASCII tool
+    # fields before the approval request reaches the Provider.
+    raw_stream = getattr(stdin, "buffer", None)
+    if raw_stream is not None:
+        raw = raw_stream.read()
+    else:
+        raw = stdin.read()
+
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        return bytes(raw).decode("utf-8")
+    raise TypeError("stdin did not return text or bytes")
 
 
 class _TrackingProvider:

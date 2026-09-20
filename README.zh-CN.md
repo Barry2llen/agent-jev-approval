@@ -86,7 +86,7 @@ $env:TYPESAFE_DEFAULT_MODEL = "jev-latest"
 $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 ```
 
-Hook 使用 1.5 秒短超时并关闭 SDK 重试。缺少 key、超时、连接失败、API error 或 response 无法解析时，都会回退用户。Provider 故障使用稳定诊断码：`provider:missing_api_key`、`provider:timeout`、`provider:connection`、`provider:authentication`、`provider:permission_denied`、`provider:rate_limited`、`provider:bad_request`、`provider:unprocessable_entity`、`provider:not_found`、`provider:server_error`、`provider:invalid_response`、`provider:api_error` 或 `provider:sdk_error`；未知异常仍使用 `provider:error`。
+Hook 会把 Codex 的 JSON stdin 按 UTF-8 字节读取，不依赖 Windows 当前 locale/code page。Hook 使用 1.5 秒短超时并关闭 SDK 重试。缺少 key、超时、连接失败、API error 或 response 无法解析时，都会回退用户。Provider 故障使用稳定诊断码：`provider:missing_api_key`、`provider:timeout`、`provider:connection`、`provider:authentication`、`provider:permission_denied`、`provider:rate_limited`、`provider:bad_request`、`provider:unprocessable_entity`、`provider:not_found`、`provider:server_error`、`provider:invalid_response`、`provider:api_error` 或 `provider:sdk_error`；未知异常仍使用 `provider:error`。
 
 Codex 的用户级目录由 `CODEX_HOME` 控制。如果 Codex 使用了非默认目录，请在安装 Hook 前设置：
 

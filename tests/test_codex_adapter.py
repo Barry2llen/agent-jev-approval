@@ -259,6 +259,52 @@ def test_permission_request_adds_current_prompt_to_provider_context() -> None:
     assert getattr(provider.request, "context")["user_prompt"] == "Inspect the repository safely"
 
 
+def test_hooks_decode_utf8_bytes_independent_of_text_stream_encoding() -> None:
+    store = PromptStoreStub()
+    prompt_stdout = io.StringIO()
+    prompt_stderr = io.StringIO()
+    prompt_payload = {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "session-1",
+        "turn_id": "turn-utf8",
+        "prompt": "检查仓库并保持范围不变",
+    }
+    prompt_input = io.TextIOWrapper(
+        io.BytesIO(json.dumps(prompt_payload, ensure_ascii=False).encode("utf-8")),
+        encoding="gbk",
+    )
+
+    assert run_codex_user_prompt_hook(prompt_input, prompt_stdout, prompt_stderr, prompt_store=store) == 0
+    assert prompt_stdout.getvalue() == ""
+    assert prompt_stderr.getvalue() == ""
+    assert store.load(session_id="session-1", turn_id="turn-utf8") == "检查仓库并保持范围不变"
+
+    permission = payload()
+    permission["turn_id"] = "turn-utf8"
+    permission["tool_input"] = {"command": "git add -- README.md", "justification": "需要写入"}
+    provider = ContextProvider()
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    permission_input = io.TextIOWrapper(
+        io.BytesIO(json.dumps(permission, ensure_ascii=False).encode("utf-8")),
+        encoding="gbk",
+    )
+
+    assert (
+        run_codex_hook(
+            permission_input,
+            stdout,
+            stderr,
+            provider=provider,
+            audit_writer=NoopAuditWriter(),
+            prompt_store=store,
+        )
+        == 0
+    )
+    assert json.loads(stdout.getvalue())["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+    assert getattr(provider.request, "arguments")["justification"] == "需要写入"
+
+
 def test_oversized_prompt_capture_does_not_write_stdout(tmp_path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
