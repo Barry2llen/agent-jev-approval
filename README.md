@@ -88,11 +88,45 @@ $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 
 The hook uses a short 1.5-second provider timeout and disables SDK retries. A missing key, timeout, connection failure, API error, or invalid response falls back to the user.
 
+Codex's user-level directory is controlled by `CODEX_HOME`. Set it before installing the Hook when Codex uses a non-default home:
+
+```powershell
+$env:CODEX_HOME = "C:\Users\you\.codex"
+```
+
 ## Connect Codex
+
+The one-command installer merges the Hook into the user-level Codex config, keeps other Hooks, and creates a backup before changing an existing file:
+
+```powershell
+agent-jev-approval install-codex-hook
+```
+
+From a source checkout on Windows, the PowerShell wrapper is equivalent:
+
+```powershell
+.\scripts\install-codex-hook.ps1
+```
+
+Useful variants:
+
+```powershell
+# Configure the current repository instead of the user profile
+agent-jev-approval install-codex-hook --scope project
+
+# Preview the target without writing anything
+agent-jev-approval install-codex-hook --dry-run
+
+# Use an explicit path or a Python module command when the console script is not on PATH
+agent-jev-approval install-codex-hook --path "$env:CODEX_HOME/hooks.json" --command "py -m agent_jev_approval.cli codex"
+```
+
+The installer is idempotent. It updates an existing `agent-jev-approval codex` entry instead of adding duplicates, preserves unrelated Hook entries, rejects malformed JSON without overwriting it, and writes atomically.
+The `--timeout` value is written as a whole-number second because Codex's Hook schema expects an unsigned integer.
 
 Copy or merge [`examples/codex-hooks.json`](examples/codex-hooks.json) into one of Codex's active Hook configuration layers:
 
-- User: `~/.codex/hooks.json`
+- User: `$CODEX_HOME/hooks.json` (or Codex's default home when `CODEX_HOME` is unset)
 - Repository: `<repo>/.codex/hooks.json`
 
 The example includes `commandWindows` for Windows. If the installed console script is not on `PATH`, use:

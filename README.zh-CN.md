@@ -88,11 +88,45 @@ $env:TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 
 Hook 使用 1.5 秒短超时并关闭 SDK 重试。缺少 key、超时、连接失败、API error 或 response 无法解析时，都会回退用户。
 
+Codex 的用户级目录由 `CODEX_HOME` 控制。如果 Codex 使用了非默认目录，请在安装 Hook 前设置：
+
+```powershell
+$env:CODEX_HOME = "C:\Users\you\.codex"
+```
+
 ## 接入 Codex
+
+一键安装命令会把 Hook 合并到用户级 Codex 配置，保留其他 Hook，并在修改已有文件前创建备份：
+
+```powershell
+agent-jev-approval install-codex-hook
+```
+
+在 Windows 的源码 checkout 中，也可以使用 PowerShell 包装脚本：
+
+```powershell
+.\scripts\install-codex-hook.ps1
+```
+
+常用变体：
+
+```powershell
+# 配置当前仓库，而不是用户级配置
+agent-jev-approval install-codex-hook --scope project
+
+# 只预览目标，不写入文件
+agent-jev-approval install-codex-hook --dry-run
+
+# 指定路径，或在 console script 不在 PATH 时使用 Python module 命令
+agent-jev-approval install-codex-hook --path "$env:CODEX_HOME/hooks.json" --command "py -m agent_jev_approval.cli codex"
+```
+
+安装器可重复执行：会更新已有的 `agent-jev-approval codex` 条目而不是重复添加，保留无关 Hook，遇到 malformed JSON 时拒绝覆盖，并使用原子写入。
+`--timeout` 使用整数秒，因为 Codex Hook schema 要求无符号整数。
 
 将 [`examples/codex-hooks.json`](examples/codex-hooks.json) 合并到 Codex 生效的 Hook 配置层：
 
-- 用户级：`~/.codex/hooks.json`
+- 用户级：`$CODEX_HOME/hooks.json`（未设置时使用 Codex 默认目录）
 - 仓库级：`<repo>/.codex/hooks.json`
 
 示例包含 Windows 的 `commandWindows`。如果 console script 不在 `PATH` 中，可以改用：
