@@ -51,13 +51,19 @@ class _TypeSafeStubHandler(BaseHTTPRequestHandler):
         return
 
 
-def _run_cli(payload: dict[str, object], base_url: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    payload: dict[str, object],
+    base_url: str,
+    *,
+    audit_path: str = "off",
+) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment.update(
         {
             "TYPESAFE_API_KEY": "test-key",
             "TYPESAFE_BASE_URL": base_url,
             "TYPESAFE_LOG_LEVEL": "off",
+            "AGENT_JEV_AUDIT_LOG": audit_path,
         }
     )
     return subprocess.run(
@@ -90,6 +96,32 @@ def test_real_cli_process_emits_allow_for_stubbed_jev_response() -> None:
         }
     }
     assert _TypeSafeStubHandler.request_count == 1
+
+
+def test_real_cli_process_writes_one_audit_record(tmp_path) -> None:
+    _TypeSafeStubHandler.request_count = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _TypeSafeStubHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    audit_path = tmp_path / "approval.audit.jsonl"
+    try:
+        result = _run_cli(
+            _hook_payload("git status"),
+            f"http://127.0.0.1:{server.server_port}",
+            audit_path=str(audit_path),
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+    assert result.returncode == 0
+    records = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 1
+    assert records[0]["decision"] == "ALLOW"
+    assert records[0]["reason"] == "jev:thresholds_satisfied"
+    assert records[0]["provider_called"] is True
+    assert "git status" not in json.dumps(records[0])
 
 
 def test_real_cli_process_keeps_stdout_empty_for_hard_rule() -> None:

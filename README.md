@@ -94,6 +94,24 @@ Codex's user-level directory is controlled by `CODEX_HOME`. Set it before instal
 $env:CODEX_HOME = "C:\Users\you\.codex"
 ```
 
+## Audit logging
+
+Every Codex `PermissionRequest` Hook invocation is recorded as one privacy-preserving JSONL event, including malformed input, hard-rule fallbacks, Provider failures, and `ALLOW` decisions. By default the file is:
+
+```text
+$CODEX_HOME/agent-jev-approval.audit.jsonl
+```
+
+When `CODEX_HOME` is unset, the default is `.codex/agent-jev-approval.audit.jsonl` under the current user's home directory. Override the path with:
+
+```powershell
+$env:AGENT_JEV_AUDIT_LOG = "C:\Logs\agent-jev-approval.jsonl"
+```
+
+Relative override paths are resolved under the Codex user directory. Set `AGENT_JEV_AUDIT_LOG=off` to explicitly disable audit writes. Each event contains a schema version, UTC timestamp, opaque event ID, bounded agent/action and session/turn identifiers, decision, stable reason, Provider-call flag, and approval duration. It never stores full commands, `tool_input`, cwd, transcript paths, exception text, or Jev responses.
+
+Writes are synchronous, append-only, and best-effort. A filesystem failure emits the stable `audit_write_error` diagnostic without changing the approval result or Codex stdout protocol. The project does not rotate or make the local file tamper-evident; configure external retention and rotation as needed.
+
 ## Connect Codex
 
 The one-command installer merges the Hook into the user-level Codex config, keeps other Hooks, and creates a backup before changing an existing file:
@@ -210,7 +228,7 @@ Lowering thresholds expands autonomous execution and should be backed by local e
 - Any exception, timeout, API error, missing answer, or malformed response becomes `FALLBACK_TO_USER`.
 - Hard rules run before Jev, so known high-impact commands do not reach the provider.
 - stdout contains only the official Codex allow JSON or nothing.
-- stderr contains only stable reason codes; it does not print API keys, tokens, credentials, secrets, full commands, or full arguments.
+- stderr contains only stable fallback or audit reason codes; it does not print API keys, tokens, credentials, secrets, full commands, or full arguments.
 - TypeSafe SDK body logging is disabled by the provider.
 - The normalized approval request is sent to TypeSafe for evaluation. Review your data-handling requirements before enabling this for sensitive repositories; this MVP does not perform outbound secret redaction.
 - Treat this Hook as one layer of defense. Use least-privilege OS accounts, repository protections, and network controls for stronger enforcement.
@@ -231,6 +249,7 @@ The tests use fake providers and a local HTTP stub; they do not require a real T
 - timeout, API error, and malformed provider responses;
 - Codex input normalization;
 - exact allow JSON and empty-stdout fallback;
+- one privacy-safe audit record for every Hook outcome, including audit-write failure behavior;
 - a real CLI subprocess using a local TypeSafe stub.
 
 To simulate Codex input manually:

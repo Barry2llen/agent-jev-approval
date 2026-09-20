@@ -22,6 +22,11 @@ class SecretErrorProvider:
         raise RuntimeError("api_key=sk-secret-token")
 
 
+class NoopAuditWriter:
+    def write(self, _: object) -> None:
+        return
+
+
 def payload(command: str = "git status") -> dict[str, object]:
     return {
         "hook_event_name": "PermissionRequest",
@@ -64,7 +69,7 @@ def test_cli_allow_writes_only_allow_json() -> None:
     stderr = io.StringIO()
     provider = AllowProvider()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider)
+    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider, audit_writer=NoopAuditWriter())
 
     assert exit_code == 0
     assert json.loads(stdout.getvalue()) == {
@@ -83,7 +88,7 @@ def test_cli_fallback_keeps_native_approval_by_leaving_stdout_empty() -> None:
     stderr = io.StringIO()
     provider = AllowProvider()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider)
+    exit_code = run_codex_hook(stdin, stdout, stderr, provider=provider, audit_writer=NoopAuditWriter())
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
@@ -96,7 +101,7 @@ def test_malformed_input_falls_back_without_secret_logging() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
-    exit_code = run_codex_hook(stdin, stdout, stderr)
+    exit_code = run_codex_hook(stdin, stdout, stderr, audit_writer=NoopAuditWriter())
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
@@ -110,7 +115,13 @@ def test_missing_cwd_is_malformed_and_cannot_auto_approve() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
-    exit_code = run_codex_hook(io.StringIO(json.dumps(malformed)), stdout, stderr, provider=AllowProvider())
+    exit_code = run_codex_hook(
+        io.StringIO(json.dumps(malformed)),
+        stdout,
+        stderr,
+        provider=AllowProvider(),
+        audit_writer=NoopAuditWriter(),
+    )
 
     assert exit_code == 0
     assert stdout.getvalue() == ""
@@ -121,7 +132,13 @@ def test_provider_exception_does_not_reach_stderr() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
-    exit_code = run_codex_hook(io.StringIO(json.dumps(payload())), stdout, stderr, provider=SecretErrorProvider())
+    exit_code = run_codex_hook(
+        io.StringIO(json.dumps(payload())),
+        stdout,
+        stderr,
+        provider=SecretErrorProvider(),
+        audit_writer=NoopAuditWriter(),
+    )
 
     assert exit_code == 0
     assert stdout.getvalue() == ""

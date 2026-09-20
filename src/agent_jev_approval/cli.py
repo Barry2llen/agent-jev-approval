@@ -6,17 +6,27 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections.abc import Sequence
 from typing import TextIO
 
 from .adapters.codex import MalformedCodexInput, parse_codex_permission_request, render_result
 from .approval import ApprovalProvider, evaluate_approval
+from .audit import (
+    AuditRecord,
+    AuditWriter,
+    create_audit_writer,
+    new_audit_event_id,
+    safe_identifier,
+    utc_timestamp,
+)
 from .codex_setup import (
     DEFAULT_HOOK_COMMAND,
     DEFAULT_HOOK_TIMEOUT,
     CodexHookInstallError,
     install_codex_hook,
 )
+from .models import ApprovalDecision, ApprovalRequest, ApprovalResult, JevAssessment
 from .policy import DEFAULT_POLICY
 from .providers.typesafe import TypeSafeProvider
 
@@ -80,28 +90,60 @@ def run_codex_hook(
     stderr: TextIO,
     *,
     provider: ApprovalProvider | None = None,
+    audit_writer: AuditWriter | None = None,
 ) -> int:
     """Read one Codex event, write only an allow response, and always exit safely."""
+
+    started = time.perf_counter()
+    event_id = new_audit_event_id()
+    writer = audit_writer
+    audit_setup_failed = False
+    if writer is None:
+        try:
+            writer = create_audit_writer()
+        except Exception:  # noqa: BLE001 - audit setup must never change approval behavior.
+            audit_setup_failed = True
+
+    request: ApprovalRequest | None = None
+    tracked_provider: _TrackingProvider | None = None
+    result: ApprovalResult
 
     try:
         raw = stdin.read()
         payload = json.loads(raw)
         request = parse_codex_permission_request(payload)
     except (json.JSONDecodeError, MalformedCodexInput, TypeError, ValueError):
-        _write_fallback(stderr, "malformed_input")
-        return 0
+        result = ApprovalResult(ApprovalDecision.FALLBACK_TO_USER, "malformed_input")
     except Exception:  # noqa: BLE001 - stdin failures must also fail to user.
-        _write_fallback(stderr, "input_error")
-        return 0
+        result = ApprovalResult(ApprovalDecision.FALLBACK_TO_USER, "input_error")
+    else:
+        try:
+            selected_provider = provider if provider is not None else TypeSafeProvider(
+                timeout_seconds=DEFAULT_POLICY.provider_timeout_seconds
+            )
+            tracked_provider = _TrackingProvider(selected_provider)
+            result = evaluate_approval(request, tracked_provider)
+        except Exception:  # noqa: BLE001 - defense in depth around the hook process.
+            result = ApprovalResult(ApprovalDecision.FALLBACK_TO_USER, "approval_error")
 
-    try:
-        result = evaluate_approval(
-            request,
-            provider or TypeSafeProvider(timeout_seconds=DEFAULT_POLICY.provider_timeout_seconds),
-        )
-    except Exception:  # noqa: BLE001 - defense in depth around the hook process.
-        _write_fallback(stderr, "approval_error")
-        return 0
+    duration_ms = max(0, int(round((time.perf_counter() - started) * 1000)))
+    _write_audit_record(
+        stderr,
+        writer,
+        setup_failed=audit_setup_failed,
+        record=AuditRecord(
+            timestamp=utc_timestamp(),
+            event_id=event_id,
+            agent="codex",
+            action=request.action if request is not None else None,
+            session_id=safe_identifier(request.context.get("session_id")) if request is not None else None,
+            turn_id=safe_identifier(request.context.get("turn_id")) if request is not None else None,
+            decision=result.decision,
+            reason=result.reason,
+            provider_called=tracked_provider.called if tracked_provider is not None else False,
+            duration_ms=duration_ms,
+        ),
+    )
 
     rendered = render_result(result)
     if rendered:
@@ -110,6 +152,41 @@ def run_codex_hook(
     else:
         _write_fallback(stderr, result.reason)
     return 0
+
+
+class _TrackingProvider:
+    """Track whether the approval engine crossed the Provider boundary."""
+
+    def __init__(self, delegate: ApprovalProvider) -> None:
+        self._delegate = delegate
+        self.called = False
+
+    def assess(self, request: ApprovalRequest) -> JevAssessment:
+        self.called = True
+        return self._delegate.assess(request)
+
+
+def _write_audit_record(
+    stderr: TextIO,
+    writer: AuditWriter | None,
+    *,
+    setup_failed: bool,
+    record: AuditRecord,
+) -> None:
+    if setup_failed:
+        _write_audit_warning(stderr)
+        return
+    if writer is None:
+        return
+    try:
+        writer.write(record)
+    except Exception:  # noqa: BLE001 - audit is best-effort and never changes the decision.
+        _write_audit_warning(stderr)
+
+
+def _write_audit_warning(stderr: TextIO) -> None:
+    stderr.write("agent-jev-approval: audit: audit_write_error\n")
+    stderr.flush()
 
 
 def _write_fallback(stderr: TextIO, reason: str) -> None:

@@ -94,6 +94,24 @@ Codex 的用户级目录由 `CODEX_HOME` 控制。如果 Codex 使用了非默�
 $env:CODEX_HOME = "C:\Users\you\.codex"
 ```
 
+## 审计日志
+
+每次 Codex `PermissionRequest` Hook 调用都会写入一条隐私安全的 JSONL 记录，包括 malformed input、hard rule 回退、Provider 故障和 `ALLOW` 决策。默认路径为：
+
+```text
+$CODEX_HOME/agent-jev-approval.audit.jsonl
+```
+
+未设置 `CODEX_HOME` 时，默认写入当前用户 home 目录下的 `.codex/agent-jev-approval.audit.jsonl`。可以覆盖路径：
+
+```powershell
+$env:AGENT_JEV_AUDIT_LOG = "C:\Logs\agent-jev-approval.jsonl"
+```
+
+相对路径会按 Codex 用户目录解析。显式设置 `AGENT_JEV_AUDIT_LOG=off` 可以关闭审计写入。每条记录包含 schema 版本、UTC 时间、opaque event ID、受限的 agent/action 和 session/turn 标识、decision、稳定 reason、是否调用 Provider 以及审批耗时；不会记录完整命令、`tool_input`、cwd、transcript 路径、异常文本或 Jev 原始回答。
+
+日志采用同步追加、best-effort 写入。文件系统失败时只输出稳定的 `audit_write_error` 诊断，不改变审批结果或 Codex stdout 协议。本项目不负责日志轮转，也不提供防篡改证据链；如有需要请配置外部留存和轮转。
+
 ## 接入 Codex
 
 一键安装命令会把 Hook 合并到用户级 Codex 配置，保留其他 Hook，并在修改已有文件前创建备份：
@@ -210,7 +228,7 @@ result = evaluate_approval(
 - 任意异常、超时、API error、缺少 answer 或 malformed response 都会变成 `FALLBACK_TO_USER`。
 - hard rules 在 Jev 调用前执行，已知高影响命令不会发送给 Provider。
 - stdout 只可能包含官方 Codex allow JSON 或为空。
-- stderr 只输出稳定的 reason code，不输出 API key、token、credential、secret、完整命令或完整参数。
+- stderr 只输出稳定的 fallback 或 audit reason code，不输出 API key、token、credential、secret、完整命令或完整参数。
 - Provider 会关闭 TypeSafe SDK 的 body logging。
 - 规范化后的审批请求会发送给 TypeSafe 评估。启用前请检查自身数据处理要求；当前 MVP 不做出站 secret redaction。
 - Hook 只是防线之一。更强的控制仍应使用最小权限 OS 账号、仓库保护和网络控制。
@@ -231,6 +249,7 @@ py -m pytest -q
 - timeout、API error、malformed response；
 - Codex 输入转换；
 - 精确 allow JSON 和空 stdout fallback；
+- 所有 Hook 结果各有一条隐私安全审计记录，以及审计写入失败时的行为；
 - 使用本地 TypeSafe stub 的真实 CLI 子进程。
 
 手动模拟 Codex 输入：
